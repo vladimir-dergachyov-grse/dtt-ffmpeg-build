@@ -74,4 +74,4 @@ ffmpeg-8.1.2 source         # exact source (mirror it; SHA-256 in build script)
 build-ffmpeg-lgpl.sh/.cmd   # the build configuration (part of "source")
 ```
 Plus an in-app line: "Uses FFmpeg (LGPL v2.1) and other open-source libraries --
-source: <your-hosted-link>".
+source: [vladimir-dergachyov-grse/dtt-ffmpeg-build](https://github.com/vladimir-dergachyov-grse/dtt-ffmpeg-build)".

@@ -15,7 +15,7 @@ replaced by the user with a compatible build.
 Corresponding source code for FFmpeg (the exact version, plus the scripts and
 configuration used to build it) is available from:
 
-    <INSERT YOUR SOURCE-CODE URL HERE>
+    https://github.com/vladimir-dergachyov-grse/dtt-ffmpeg-build
 
 All other components below are under permissive licenses (BSD / MIT / Zlib /
 0BSD / Apache-2.0) and are included in binary form; their notices follow.
