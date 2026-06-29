@@ -1,0 +1,17 @@
+# Normalize line endings so the build is reproducible on any host.
+
+# Shell scripts MUST stay LF - CRLF breaks the MSYS2/bash shebang and parsing.
+*.sh        text eol=lf
+
+# Windows launchers must stay CRLF.
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
+
+# Documentation / notices: normalized text (LF in repo).
+*.md        text
+*.txt       text
+
+# The FFmpeg source tarball and checksums are binary - never EOL-convert or diff.
+*.tar.xz    binary
+*.tar.*     binary
+*.sha256    -text

@@ -1,0 +1,45 @@
+# ============================================================================
+# Build artifacts - regenerable by build-ffmpeg-lgpl.sh, NOT committed
+# ============================================================================
+
+# extracted FFmpeg source tree + all object files (~280 MB)
+/build/
+
+# compiled output: *.dll, *.exe, headers, import libs (~56 MB)
+/dist/
+
+# build.log and any other build logs
+*.log
+
+# pkg-config overlay (normally under build/; ignored if placed elsewhere)
+pkgconfig-overlay/
+
+# ============================================================================
+# Local test / scratch files
+# ============================================================================
+*.webm
+*.m4a
+nope.*
+smoketest.*
+
+# ============================================================================
+# OS / editor junk
+# ============================================================================
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp
+*~
+.vscode/
+.idea/
+
+# ============================================================================
+# FFmpeg source tarball (LGPL "corresponding source")
+# ----------------------------------------------------------------------------
+# sources/ffmpeg-8.1.2.tar.xz is intentionally COMMITTED so this repo is a
+# self-contained record of the exact source used (LGPL compliance). It is
+# small (~12 MB). To instead attach it as a GitHub Release asset and keep it
+# out of git history, uncomment the two lines below:
+# /sources/*.tar.*
+# /sources/*.sha256
+# ============================================================================
