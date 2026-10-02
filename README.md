@@ -19,7 +19,7 @@ later** as **shared libraries (DLLs)**, configured to be safe for inclusion in
 |------|---------|
 | `build-ffmpeg-lgpl.sh` | The build script (runs in an MSYS2 **MINGW64** shell). |
 | `build-ffmpeg-lgpl.cmd` | Windows launcher — sets up MINGW64 and runs the script. |
-| `dist/` | Output: `bin/` (DLLs + `ffmpeg.exe`/`ffprobe.exe`/`ffplay.exe`), `include/`, `lib/`. |
+| `dist/` | Output: `bin/` (DLLs + `ffmpeg.exe`/`ffprobe.exe`), `include/`, `lib/`. |
 | `sources/` | Downloaded source tarball + checksum. |
 | `build/` | Extracted source + object files. |
 | `build.log` | Full log of the last build. |
@@ -46,9 +46,10 @@ build-ffmpeg-lgpl.cmd
 
 The script downloads FFmpeg, verifies its SHA-256 (best-effort against the
 upstream-published value), configures, **hard-fails if GPL or non-free ever got
-enabled**, compiles, installs to `dist/`, bundles the dependency DLLs into
-`dist/bin`, and finally **asserts the patented decoders are absent** from the
-produced binary.
+enabled** or if **iconv / libopenmpt** got enabled, compiles, installs to
+`dist/`, bundles the dependency DLLs into `dist/bin`, and finally **asserts the
+patented decoders are absent** and that **no libiconv / libmpg123 / libopenmpt
+code** ended up in the DLLs.
 
 ### Toolchain / dependency packages
 
@@ -59,10 +60,15 @@ no package required):
 pacman -S --needed \
   make diffutils git \
   mingw-w64-x86_64-{gcc,make,nasm,yasm,pkgconf} \
-  mingw-w64-x86_64-{zlib,bzip2,xz,libiconv} \
+  mingw-w64-x86_64-{zlib,bzip2,xz} \
   mingw-w64-x86_64-{dav1d,libvpx,aom,opus,speex,libvorbis,openjpeg2} \
-  mingw-w64-x86_64-{libjxl,libopenmpt}
+  mingw-w64-x86_64-libjxl
 ```
+
+If MSYS2's own FFmpeg package (`mingw-w64-x86_64-ffmpeg`, e.g. pulled in by
+`gst-libav`) or `libva` is installed, the build still works: the script disables
+VAAPI and makes the linker use this build's own `avutil`/`avcodec`/... instead of
+the system's static `libav*.a` (see "Linking FFmpeg's own libraries" below).
 
 ## Licensing posture
 
@@ -85,7 +91,7 @@ the DLLs. If you ever switch to static linking, additional LGPL obligations
 ### Build profile — MAX DECODERS (decode + demux/mux for RTP/RTSP)
 
 Tuned for an **ONVIF / RTSP-RTP receive-and-record** pipeline with the **widest
-possible non-patented decoder set** (≈470 decoders). Component categories:
+possible non-patented decoder set** (465 decoders). Component categories:
 
 | Category | State |
 |----------|-------|
@@ -97,10 +103,11 @@ possible non-patented decoder set** (≈470 decoders). Component categories:
 | **Devices** | **disabled** (`--disable-devices`) — no dshow/gdigrab capture |
 | **Filters** | kept — `scale`, `format`, `aresample`, etc. |
 
-### External decoder libraries (all LGPL or permissive)
+### External decoder libraries (all permissive)
 
 These add decoders on top of FFmpeg's native set. Every one is **statically
-linked** (see below), so they add **no DLLs**:
+linked** (see below), so they add **no DLLs**. FFmpeg is the **only LGPL
+component** of the build:
 
 | Library | Adds | License |
 |---------|------|---------|
@@ -110,14 +117,29 @@ linked** (see below), so they add **no DLLs**:
 | **libopus** | Opus | BSD |
 | **libspeex** | Speex (no native decoder) | BSD |
 | **libvorbis** | Vorbis | BSD |
-| **libopenjpeg** | JPEG 2000 | BSD |
 | **libjxl** | JPEG XL (no native decoder) | BSD |
-| **libopenmpt** | tracker modules .mod/.xm/.it/.s3m (no native) | BSD |
 
-Plus `zlib`, `bzlib`, `lzma`, `iconv` (container/subtitle support) and **SChannel**
+Plus `zlib`, `bzlib`, `lzma` (container support) and **SChannel**
 (native-Windows TLS for `rtsps://`/`https://`/`tls://` — no GnuTLS/crypto DLLs).
-`libaribcaption` was evaluated but skipped (its MSYS2 build is shared-only and
-pulls a DirectWrite font stack — irrelevant to ONVIF).
+
+`--enable-libopenjpeg` is still passed, but in FFmpeg 8.1 libopenjpeg only
+provides an *encoder*; with encoders disabled no OpenJPEG code is linked, and
+JPEG 2000 is decoded by FFmpeg's native `jpeg2000` decoder. Likewise `lcms2`
+(required by libjxl's `.pc` files) contributes no code — including its
+GPL-3.0 `fast_float` plugin, which `lcms2.pc` adds to the link line but nothing
+references (checked with a linker map).
+
+Deliberately **not** used:
+
+* **libiconv** (LGPL; subtitle character-set conversion) — `--disable-iconv`,
+  because configure would otherwise auto-detect it.
+* **libopenmpt** (tracker modules .mod/.xm/.it/.s3m) and its dependency
+  **libmpg123** (LGPL) — not enabled. FFmpeg's own MP3 decoder, parser, demuxer,
+  muxer and RTP depacketizer are unaffected.
+* **libva / VAAPI** — `--disable-vaapi`; hardware decoding uses DXVA2 /
+  D3D11VA / D3D12VA.
+* **libaribcaption** — its MSYS2 build is shared-only and pulls a DirectWrite
+  font stack; irrelevant to ONVIF.
 
 > The `dist\bin` folder still ships just the **7 FFmpeg DLLs** (`avcodec`,
 > `avformat`, `avutil`, `avfilter`, `avdevice`, `swscale`, `swresample`) — every
@@ -132,14 +154,23 @@ libraries **into** each FFmpeg DLL. The FFmpeg libraries themselves stay
 **shared** (`--enable-shared`), so you still get separate, replaceable `av*.dll`
 (LGPL-friendly), but they carry no external runtime dependency.
 
+#### Linking FFmpeg's own libraries
+
+With `-static`, `ld` only searches for static `lib<name>.a`. The build tree has
+only import libraries (`lib<name>.dll.a`) for `avutil`, `avcodec`, ..., so if
+MSYS2's own FFmpeg package is installed, `ld` would silently link its
+`/mingw64/lib/libavutil.a` into every DLL. After configure, the script therefore
+rewrites `LD_LIB` in `ffbuild/config.mak` to `-Wl,-Bdynamic -l% -Wl,-Bstatic`.
+`LD_LIB` is only used for FFmpeg's internal libraries, so external libraries and
+the GCC runtime stay static while each DLL imports `avutil-60.dll` etc.
+
 #### C++ decoder libraries without a `libstdc++.dll` dependency
 
-`libjxl` and `libopenmpt` are C++. Their MSYS2 `.pc` files omit the C++ runtime
-from `Libs.private` (`libjxl_threads.pc` lists only `-lm`; `libopenmpt.pc` is
-empty), so a `-static` link of FFmpeg's `pkg-config` probe fails on `std::`
-symbols. This build solves it the same way **[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds)**
+`libjxl` is C++. Its MSYS2 `libjxl_threads.pc` omits the C++ runtime from
+`Libs.private` (it lists only `-lm`), so a `-static` link of FFmpeg's
+`pkg-config` probe fails on `std::` symbols. This build solves it the same way **[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds)**
 does — declaring `-lstdc++` **per-library via a pkg-config overlay** (a temp
-copy of those `.pc` files with `Libs.private: … -lstdc++ -ladvapi32` appended;
+copy of that `.pc` file with `Libs.private: … -lstdc++ -ladvapi32` appended;
 no system file is touched), rather than forcing it globally. Combined with
 `-static`, `libstdc++` is then linked **statically**, so the FFmpeg DLLs do
 **not** depend on `libstdc++.dll`. (`objdump -p avcodec-62.dll` lists only

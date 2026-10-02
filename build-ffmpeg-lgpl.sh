@@ -148,7 +148,8 @@ log "Configuring (LGPL, shared, Windows 10+ x64, MAX decoders, no patented codec
 #   libopenjpeg .... JPEG 2000               libjxl ......... JPEG XL (no native)
 # (libjxl ships shared-export headers; -DJXL_*_STATIC_DEFINE forces static link.)
 # (libaribcaption skipped: MSYS2 build is shared-only. libopenmpt + libiconv were
-#  dropped to keep FFmpeg the ONLY LGPL component -- all bundled libs now permissive.)
+#  dropped to keep FFmpeg the ONLY LGPL component -- all bundled libs now permissive.
+#  iconv is auto-detected by configure, so it must be disabled explicitly.)
 # TLS uses the native Windows SChannel (no GnuTLS/crypto DLLs).
 # --pkg-config-flags=--static makes pkg-config emit the full static dep chain
 # (hwy/brotli/lcms2 for jxl) so the -static link resolves.
@@ -199,6 +200,8 @@ log "pkg-config overlay: scoped -lstdc++ into libjxl/libjxl_threads"
     --enable-zlib \
     --enable-bzlib \
     --enable-lzma \
+    --disable-iconv \
+    --disable-vaapi \
     --disable-sdl2 \
     --enable-libdav1d \
     --enable-libvpx \
@@ -217,6 +220,27 @@ CFG="ffbuild/config.mak"
 grep -q '^CONFIG_GPL=yes'     "$CFG" && die "GPL got enabled -- aborting (strict LGPL required)."
 grep -q '^CONFIG_NONFREE=yes' "$CFG" && die "Non-free got enabled -- aborting (strict LGPL required)."
 log "License OK: GPL=no, non-free=no (LGPL v2.1 or later)."
+
+# FFmpeg must stay the ONLY LGPL component: libiconv (LGPL) and libopenmpt
+# (which statically drags in LGPL libmpg123) must not be linked. iconv is
+# auto-detected, and an auto-detected library does NOT appear in -buildconf,
+# so check the resolved configuration instead.
+for lib in ICONV LIBOPENMPT; do
+    grep -q "^CONFIG_${lib}=yes" "$CFG" && die "CONFIG_${lib} got enabled -- aborting (it would add an LGPL dependency)."
+done
+log "LGPL deps OK: iconv=no, libopenmpt=no."
+
+# Link FFmpeg's OWN libraries (-lavutil, -lavcodec, ...) dynamically.
+# --extra-ldflags=-static makes ld search only for static lib<name>.a. Our build
+# tree has just the import libs (lib<name>.dll.a), so if MSYS2's own FFmpeg
+# package is installed (e.g. pulled in by gst-libav) ld silently links ITS
+# /mingw64/lib/libavutil.a into every DLL -- wrong code, and a link failure on
+# its QSV objects. LD_LIB is only used for FFmpeg's internal libraries, so
+# wrapping it in -Bdynamic/-Bstatic keeps all external libs and the GCC
+# runtime static while the DLLs import avutil-60.dll etc. as intended.
+grep -q '^LD_LIB=-l%$' "$CFG" || die "Unexpected LD_LIB in $CFG -- cannot apply the dynamic-internal-libs fix."
+sed -i 's/^LD_LIB=-l%$/LD_LIB=-Wl,-Bdynamic -l% -Wl,-Bstatic/' "$CFG"
+log "Internal FFmpeg libraries will be linked dynamically (LD_LIB patched)."
 
 # ---------------------------------------------------------------------------
 # Build & install
@@ -280,3 +304,21 @@ for d in h264 hevc vvc vc1 aac ac3 ac3_fixed eac3 truehd dca dolby_e mpeg4 wmav2
 done
 [ "$leak" = 0 ] || die "A patented decoder is still present -- check --disable-decoder list."
 log "All targeted patented decoders confirmed absent."
+
+# ---------------------------------------------------------------------------
+# Assert no LGPL library other than FFmpeg was statically linked into the DLLs.
+# FFmpeg's own source never mentions mpg123, and the symbol names of a linked
+# libiconv / libmpg123 survive in the binary, so any hit means a leak.
+# ---------------------------------------------------------------------------
+echo
+log "Verifying libiconv / libmpg123 / libopenmpt are not linked"
+leak=0
+for f in *.dll; do
+    for s in libiconv mpg123 openmpt; do
+        if grep -a -q -i "$s" "$f"; then
+            echo "  FOUND '$s' in $f"; leak=1
+        fi
+    done
+done
+[ "$leak" = 0 ] || die "An LGPL dependency other than FFmpeg is linked -- check configure options."
+log "No libiconv / libmpg123 / libopenmpt code in the DLLs."
