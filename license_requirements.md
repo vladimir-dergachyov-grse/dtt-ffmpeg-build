@@ -10,8 +10,9 @@ This is practical guidance, not legal advice.
   x264/x265/fdk-aac).
 - Shipped as **shared DLLs** (`avcodec`, `avformat`, `avutil`, `avfilter`,
   `avdevice`, `swscale`, `swresample`). Your app links them **dynamically**.
-- **FFmpeg is the only LGPL component.** Only permissive (BSD/MIT/Zlib/0BSD/
-  Apache-2.0) libraries are statically baked into the FFmpeg DLLs (see table).
+- **FFmpeg is the only LGPL component.** No external codec libraries are used;
+  only zlib and the mingw-w64/GCC runtime are statically baked into the FFmpeg
+  DLLs (see table).
   libiconv, libopenmpt (with its libmpg123 dependency) and libva are
   deliberately excluded; `build-ffmpeg-lgpl.sh` fails if iconv or libopenmpt
   get enabled or if libiconv / libmpg123 / libopenmpt code shows up in a DLL.
@@ -49,33 +50,20 @@ This is practical guidance, not legal advice.
 
 ## Component licenses
 
-Libraries actually linked into the DLLs (verified with a linker map):
+Libraries actually linked into the DLLs and executables (verified 2026-11-20
+with a linker map of each one: take the link commands from `make -n -B V=1` in
+the build tree and re-run them with `-Wl,-Map=<file>`). zlib is in `avcodec`,
+`avformat` and `ffmpeg.exe`; winpthreads is in `avutil`; libgcc is in all of
+them. No libstdc++ is linked, because `--disable-filter=gfxcapture` removes
+FFmpeg's only C++ source:
 
 | Component | License | Duty |
 |-----------|---------|------|
 | FFmpeg (core libs) | LGPL-2.1+ | License text + **corresponding source + build config** |
-| dav1d | BSD-2-Clause | Notice |
-| libvpx | BSD-3-Clause | Notice |
-| libaom | BSD-2-Clause (+ AOMedia Patent License 1.0) | Notice |
-| libopus, libspeex, libvorbis, libogg | BSD-3-Clause | Notice |
-| libjxl | BSD-3-Clause | Notice |
-| -- highway (jxl dep) | Apache-2.0 / BSD-3 | Notice |
-| -- brotli decoder (jxl dep) | MIT | Notice |
 | zlib | Zlib | Notice |
-| bzip2 | bzip2 (BSD-style) | Notice |
-| xz / liblzma | 0BSD | Notice (optional) |
-| GCC runtime (libgcc, libstdc++) | GPL-3.0 + GCC Runtime Library Exception | None (exception covers it) |
+| GCC runtime (libgcc) | GPL-3.0 + GCC Runtime Library Exception | None (exception covers it) |
 | mingw-w64 winpthreads | MIT AND BSD-3-Clause | Notice |
 | Windows SChannel (TLS) | OS component | None |
-
-Installed for the build but **not linked** (no code in the DLLs):
-
-- **OpenJPEG** -- FFmpeg 8.1 only has a libopenjpeg *encoder*; encoders are
-  disabled. JPEG 2000 is decoded by FFmpeg's native decoder.
-- **lcms2** -- pulled in only by libjxl's pkg-config files. Its `fast_float`
-  plugin is **GPL-3.0-or-later** and `lcms2.pc` puts `-llcms2_fast_float` on
-  the link line, but nothing references it, so nothing is linked. Re-check
-  this with a linker map (`-Wl,-Map=...`) whenever libjxl or lcms2 is updated.
 
 "Notice" = include the library's copyright line + license text in your
 distribution. "Source" = also make the exact source + build configuration

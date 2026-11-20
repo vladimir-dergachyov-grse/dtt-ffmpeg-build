@@ -9,8 +9,8 @@
 #   * NO --enable-nonfree   (excludes libfdk-aac, OpenSSL-linked nonfree, ...)
 #   * NO --enable-version3  (keeps result at LGPL v2.1-or-later)
 #
-# Only LGPL- or permissive-licensed (BSD/MIT/ISC/MPL-2.0) external libraries
-# are enabled. The script aborts if GPL or non-free code is ever turned on.
+# No external codec libraries are linked (only zlib and the Windows SChannel TLS
+# stack). The script aborts if GPL or non-free code is ever turned on.
 #
 # Run it from an MSYS2 *MINGW64* shell (the launcher .cmd sets this up):
 #     ./build-ffmpeg-lgpl.sh
@@ -95,7 +95,7 @@ cd "$SRC"
 # still actively licensed (e.g. Via LA AVC/HEVC/MPEG-4, Dolby, DTS), so a
 # closed-source product that ships them may owe royalties. We strip the
 # decoders AND encoders. Royalty-free or patent-EXPIRED codecs are kept:
-#   kept: VP8/VP9, AV1(dav1d/aom/svt), Theora, Opus, Vorbis, FLAC, ALAC,
+#   kept: VP8/VP9, Theora, Opus, Vorbis, FLAC, ALAC,
 #         MP3 (expired 2017), MP2, MPEG-1/MPEG-2 video (expired 2018),
 #         MJPEG/JPEG (expired), H.261 (expired).
 #
@@ -129,10 +129,9 @@ log "Configuring (LGPL, shared, Windows 10+ x64, MAX decoders, no patented codec
 
 # ---------------------------------------------------------------------------
 # Profile: an ONVIF / RTSP-RTP receive-record pipeline with the WIDEST possible
-# non-patented decoder coverage.
-#   * Decoders ......... MAXIMIZED: every native LGPL decoder (patented set
-#                        removed above) PLUS LGPL/permissive external-lib
-#                        decoders (see DECODER LIBS below).
+# non-patented NATIVE decoder coverage.
+#   * Decoders ......... every native LGPL decoder (patented set removed above);
+#                        NO external codec libraries are linked.
 #   * Demuxers/Muxers .. ALL kept (RTSP/RTP/SDP/MPEG-TS/MP4/Matroska/...)
 #   * Parsers / BSFs ... kept (depacketize & remux, e.g. h264_mp4toannexb)
 #   * Protocols ........ kept (rtp, rtsp, srtp, rtmp, udp, tcp, http(s), tls...)
@@ -140,44 +139,14 @@ log "Configuring (LGPL, shared, Windows 10+ x64, MAX decoders, no patented codec
 #   * Devices .......... DISABLED (no dshow/gdigrab capture)
 #   * Filters .......... kept (scale/format/aresample)
 #
-# DECODER LIBS (all LGPL or permissive; --extra-ldflags=-static bakes their
-# .a archives straight into the FFmpeg DLLs, so NO new runtime DLL is added):
-#   libdav1d ....... AV1   (fast)            libopus ........ Opus
-#   libvpx ......... VP8 / VP9               libspeex ....... Speex (no native)
-#   libaom ......... AV1   (ref)             libvorbis ...... Vorbis
-#   libopenjpeg .... JPEG 2000               libjxl ......... JPEG XL (no native)
-# (libjxl ships shared-export headers; -DJXL_*_STATIC_DEFINE forces static link.)
-# (libaribcaption skipped: MSYS2 build is shared-only. libopenmpt + libiconv were
-#  dropped to keep FFmpeg the ONLY LGPL component -- all bundled libs now permissive.
+# (libiconv and libopenmpt are not used, to keep FFmpeg the ONLY LGPL component.
 #  iconv is auto-detected by configure, so it must be disabled explicitly.)
 # TLS uses the native Windows SChannel (no GnuTLS/crypto DLLs).
-# --pkg-config-flags=--static makes pkg-config emit the full static dep chain
-# (hwy/brotli/lcms2 for jxl) so the -static link resolves.
+# --extra-ldflags=-static links the GCC runtime and zlib statically, so NO
+# runtime DLL is added beyond FFmpeg's own and the Windows system DLLs.
 # ---------------------------------------------------------------------------
 
-# --- C++ runtime, BtbN/FFmpeg-Builds style ---------------------------------
-# libjxl is C++. Its MSYS2 .pc files omit the C++ runtime from Libs.private
-# (libjxl_threads.pc has only -lm), so a static link of FFmpeg's pkg-config
-# probe fails on std:: symbols. Exactly as BtbN does, declare -lstdc++
-# PER-LIBRARY via a pkg-config overlay (no system file is modified). Combined
-# with --extra-ldflags=-static, libstdc++ is linked statically, so the resulting
-# FFmpeg DLLs do NOT depend on libstdc++.dll.
-PCOVL="$BUILD_DIR/pkgconfig-overlay"
-rm -rf "$PCOVL"; mkdir -p "$PCOVL"
-_pcdir="$(pkg-config --variable=pcfiledir libjxl_threads 2>/dev/null || echo /mingw64/lib/pkgconfig)"
-for pc in libjxl libjxl_threads; do
-    [ -f "$_pcdir/$pc.pc" ] || continue
-    cp "$_pcdir/$pc.pc" "$PCOVL/$pc.pc"
-    grep -qiE '^Libs\.private:.*stdc\+\+' "$PCOVL/$pc.pc" && continue
-    if grep -qiE '^Libs\.private:' "$PCOVL/$pc.pc"; then
-        sed -i -E 's/^(Libs\.private:.*)$/\1 -lstdc++ -ladvapi32/' "$PCOVL/$pc.pc"
-    else
-        printf 'Libs.private: -lstdc++ -ladvapi32\n' >> "$PCOVL/$pc.pc"
-    fi
-done
-export PKG_CONFIG_PATH="$PCOVL:${PKG_CONFIG_PATH:-/mingw64/lib/pkgconfig}"
-log "pkg-config overlay: scoped -lstdc++ into libjxl/libjxl_threads"
-
+# --disable-filter=gfxcapture: it is the only C++ source and would link libstdc++ statically into avfilter.
 ./configure \
     --disable-decoder="$DISABLE_DECODERS" \
     --disable-encoders \
@@ -194,23 +163,16 @@ log "pkg-config overlay: scoped -lstdc++ into libjxl/libjxl_threads"
     --disable-doc \
     --enable-runtime-cpudetect \
     --enable-w32threads \
-    --extra-cflags="-O2 -D_WIN32_WINNT=${WIN_MIN_NT} -DWINVER=${WIN_MIN_NT} -DJXL_STATIC_DEFINE -DJXL_THREADS_STATIC_DEFINE -DJXL_CMS_STATIC_DEFINE" \
+    --extra-cflags="-O2 -D_WIN32_WINNT=${WIN_MIN_NT} -DWINVER=${WIN_MIN_NT}" \
     --extra-ldflags="-static" \
     --enable-schannel \
     --enable-zlib \
-    --enable-bzlib \
-    --enable-lzma \
+    --disable-bzlib \
+    --disable-lzma \
     --disable-iconv \
     --disable-vaapi \
     --disable-sdl2 \
-    --enable-libdav1d \
-    --enable-libvpx \
-    --enable-libaom \
-    --enable-libopus \
-    --enable-libspeex \
-    --enable-libvorbis \
-    --enable-libopenjpeg \
-    --enable-libjxl
+    --disable-filter=gfxcapture
 
 # ---------------------------------------------------------------------------
 # License guard: hard-fail if GPL or non-free slipped in

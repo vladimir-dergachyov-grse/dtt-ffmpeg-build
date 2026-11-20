@@ -53,16 +53,14 @@ code** ended up in the DLLs.
 
 ### Toolchain / dependency packages
 
-The toolchain plus the decoder libraries (TLS uses the native Windows SChannel,
-no package required):
+The toolchain plus zlib (TLS uses the native Windows SChannel, no package
+required; no external codec libraries are used):
 
 ```bash
 pacman -S --needed \
   make diffutils git \
   mingw-w64-x86_64-{gcc,make,nasm,yasm,pkgconf} \
-  mingw-w64-x86_64-{zlib,bzip2,xz} \
-  mingw-w64-x86_64-{dav1d,libvpx,aom,opus,speex,libvorbis,openjpeg2} \
-  mingw-w64-x86_64-libjxl
+  mingw-w64-x86_64-zlib
 ```
 
 If MSYS2's own FFmpeg package (`mingw-w64-x86_64-ffmpeg`, e.g. pulled in by
@@ -91,11 +89,11 @@ the DLLs. If you ever switch to static linking, additional LGPL obligations
 ### Build profile — MAX DECODERS (decode + demux/mux for RTP/RTSP)
 
 Tuned for an **ONVIF / RTSP-RTP receive-and-record** pipeline with the **widest
-possible non-patented decoder set** (465 decoders). Component categories:
+possible non-patented decoder set** (464 decoders). Component categories:
 
 | Category | State |
 |----------|-------|
-| **Decoders** | **maximized** — every native LGPL decoder (patented set removed) **plus** LGPL/permissive external-lib decoders (below) |
+| **Decoders** | **maximized** — every native LGPL decoder (patented set removed); no external codec libraries |
 | **Demuxers / Muxers** | **all kept** — RTSP, RTP, SDP, MPEG-TS, MP4/MOV, Matroska, FLV, … |
 | **Parsers / bitstream filters** | kept — depacketize & remux (e.g. `h264_mp4toannexb`, `aac_adtstoasc`) |
 | **Protocols** | kept — `rtp`, `rtsp`, `srtp`, `rtmp`, `udp`, `tcp`, `http`, `https`, `tls`, `file`, … |
@@ -103,31 +101,17 @@ possible non-patented decoder set** (465 decoders). Component categories:
 | **Devices** | **disabled** (`--disable-devices`) — no dshow/gdigrab capture |
 | **Filters** | kept — `scale`, `format`, `aresample`, etc. |
 
-### External decoder libraries (all permissive)
+### No external codec libraries
 
-These add decoders on top of FFmpeg's native set. Every one is **statically
-linked** (see below), so they add **no DLLs**. FFmpeg is the **only LGPL
-component** of the build:
+No external codec library is linked, so FFmpeg is the **only LGPL component** of
+the build and decoding relies on FFmpeg's native decoders alone. In particular
+there is no libdav1d / libaom (so **no software AV1 decoder**), libvpx, libopus,
+libspeex, libvorbis, libopenjpeg or libjxl: VP8/VP9, Opus, Vorbis and JPEG 2000
+are decoded by FFmpeg's native decoders; Speex and JPEG XL are not supported.
 
-| Library | Adds | License |
-|---------|------|---------|
-| **libdav1d** | AV1 decode (fast) | BSD |
-| **libvpx** | VP8 / VP9 decode | BSD |
-| **libaom** | AV1 (reference) | BSD |
-| **libopus** | Opus | BSD |
-| **libspeex** | Speex (no native decoder) | BSD |
-| **libvorbis** | Vorbis | BSD |
-| **libjxl** | JPEG XL (no native decoder) | BSD |
-
-Plus `zlib`, `bzlib`, `lzma` (container support) and **SChannel**
+Besides FFmpeg the build uses only `zlib` (container support) and **SChannel**
 (native-Windows TLS for `rtsps://`/`https://`/`tls://` — no GnuTLS/crypto DLLs).
-
-`--enable-libopenjpeg` is still passed, but in FFmpeg 8.1 libopenjpeg only
-provides an *encoder*; with encoders disabled no OpenJPEG code is linked, and
-JPEG 2000 is decoded by FFmpeg's native `jpeg2000` decoder. Likewise `lcms2`
-(required by libjxl's `.pc` files) contributes no code — including its
-GPL-3.0 `fast_float` plugin, which `lcms2.pc` adds to the link line but nothing
-references (checked with a linker map).
+`bzlib` and `lzma` are disabled (`--disable-bzlib --disable-lzma`).
 
 Deliberately **not** used:
 
@@ -138,21 +122,24 @@ Deliberately **not** used:
   muxer and RTP depacketizer are unaffected.
 * **libva / VAAPI** — `--disable-vaapi`; hardware decoding uses DXVA2 /
   D3D11VA / D3D12VA.
+* **gfxcapture filter** (Windows screen capture) — `--disable-filter=gfxcapture`;
+  it is FFmpeg's only C++ source and would link libstdc++ statically into
+  `avfilter`.
 * **libaribcaption** — its MSYS2 build is shared-only and pulls a DirectWrite
   font stack; irrelevant to ONVIF.
 
 > The `dist\bin` folder still ships just the **7 FFmpeg DLLs** (`avcodec`,
-> `avformat`, `avutil`, `avfilter`, `avdevice`, `swscale`, `swresample`) — every
-> decoder library and the C/C++ runtime are baked in. **No `zlib1.dll`, no GCC
+> `avformat`, `avutil`, `avfilter`, `avdevice`, `swscale`, `swresample`) — the
+> GCC runtime and zlib are baked in. **No `zlib1.dll`, no GCC
 > runtime DLLs, no `libstdc++.dll`** (verified with `objdump -p`).
 
 ### Why only 7 DLLs — static runtime linkage
 
 The build passes `--extra-ldflags="-static"`, which statically links the GCC
-runtime (`libgcc`, `libstdc++`, `libwinpthread`) **and** all the decoder
-libraries **into** each FFmpeg DLL. The FFmpeg libraries themselves stay
-**shared** (`--enable-shared`), so you still get separate, replaceable `av*.dll`
-(LGPL-friendly), but they carry no external runtime dependency.
+runtime (`libgcc`, `libwinpthread`) **and** zlib **into** each FFmpeg DLL. The
+FFmpeg libraries themselves stay **shared** (`--enable-shared`), so you still get
+separate, replaceable `av*.dll` (LGPL-friendly), but they carry no external
+runtime dependency.
 
 #### Linking FFmpeg's own libraries
 
@@ -163,20 +150,6 @@ MSYS2's own FFmpeg package is installed, `ld` would silently link its
 rewrites `LD_LIB` in `ffbuild/config.mak` to `-Wl,-Bdynamic -l% -Wl,-Bstatic`.
 `LD_LIB` is only used for FFmpeg's internal libraries, so external libraries and
 the GCC runtime stay static while each DLL imports `avutil-60.dll` etc.
-
-#### C++ decoder libraries without a `libstdc++.dll` dependency
-
-`libjxl` is C++. Its MSYS2 `libjxl_threads.pc` omits the C++ runtime from
-`Libs.private` (it lists only `-lm`), so a `-static` link of FFmpeg's
-`pkg-config` probe fails on `std::` symbols. This build solves it the same way **[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds)**
-does — declaring `-lstdc++` **per-library via a pkg-config overlay** (a temp
-copy of that `.pc` file with `Libs.private: … -lstdc++ -ladvapi32` appended;
-no system file is touched), rather than forcing it globally. Combined with
-`-static`, `libstdc++` is then linked **statically**, so the FFmpeg DLLs do
-**not** depend on `libstdc++.dll`. (`objdump -p avcodec-62.dll` lists only
-`avutil`, `swresample`, `KERNEL32`, `msvcrt`, `ole32` — no `libstdc++`.)
-`libjxl`'s headers are also compiled with `-DJXL_STATIC_DEFINE` so the static
-archive is used instead of a dll-import stub.
 
 > **Why not MSVC?** Building with MSVC (`--toolchain=msvc`) would also avoid
 > shipping a runtime (it links the in-box UCRT on Windows 10+), but it does *not*
@@ -224,7 +197,7 @@ The exact list is intersected against what the FFmpeg version actually provides,
 so the script stays correct across versions.
 
 **Kept** because they are royalty-free or their patents have **expired**:
-VP8/VP9, AV1, Theora, Opus, Vorbis, FLAC, ALAC, **MP3** (expired 2017),
+VP8/VP9, Theora, Opus, Vorbis, FLAC, ALAC, **MP3** (expired 2017),
 **MPEG-1/MPEG-2 video** (expired 2018), MP2, **MJPEG/JPEG** (expired),
 H.261 (expired).
 
@@ -243,7 +216,7 @@ app, decode through **Windows Media Foundation** instead — that uses the OS's 
 codec under Windows' patent grant rather than a decoder you ship.
 
 For an ONVIF/RTSP use case this means: FFmpeg here handles RTSP/RTP/containers,
-TLS, AV1/VP9/Opus, scaling and muxing; H.264/H.265 from cameras should be decoded
+TLS, VP9/Opus, scaling and muxing; H.264/H.265 from cameras should be decoded
 via Media Foundation (or a separately-licensed decoder).
 
 ## Minimum Windows version

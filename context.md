@@ -16,7 +16,7 @@ libs, minimize DLL count, and finally MAXIMIZE the (non-patented) decoder set.
 - dist\bin ships exactly 7 DLLs: avcodec-62, avformat-62, avutil-60, avfilter-11,
   avdevice-62, swscale-9, swresample-6. NOTHING else.
   Verified via `objdump -p`: NO libstdc++.dll, libgcc_s, libwinpthread, zlib1.
-- 468 decoders enabled. 0 encoders. Devices disabled.
+- 464 decoders enabled. 0 encoders. Devices disabled.
 - Demuxers/muxers/parsers/bsfs/protocols/filters: kept (RTSP/RTP/SDP, MP4/MOV,
   Matroska, MPEG-TS; rtp/rtsp/srtp/tls/http(s)/tcp/udp; h264_mp4toannexb etc.).
 - TLS via native Windows SChannel (no GnuTLS / crypto DLLs).
@@ -42,12 +42,13 @@ Launch pattern used here (background):
   MSYSTEM=MINGW64 /c/msys64/usr/bin/bash.exe -lc \
     '/c/work/onvif/ffmpeg-build/build-ffmpeg-lgpl.sh 2>&1 | tee build.log; exit ${PIPESTATUS[0]}'
 
-## Decoder libraries added (all LGPL/permissive, STATICALLY linked -> no new DLL)
-libdav1d (AV1), libvpx (VP8/VP9), libaom (AV1), libopus, libspeex (no native),
-libvorbis, libopenjpeg (JPEG2000), libjxl (JPEG XL, no native), libopenmpt
-(tracker modules, no native). Plus zlib/bzlib/lzma/iconv.
-Packages: pacman -S mingw-w64-x86_64-{dav1d,libvpx,aom,opus,speex,libvorbis,
-openjpeg2,libjxl,libopenmpt,zlib,bzip2,xz,libiconv} + toolchain.
+## External libraries: none (slim build)
+No external codec libraries are linked (dav1d, libvpx, libaom, opus, speex,
+vorbis, openjpeg, libjxl and their deps were removed; bzlib/lzma are disabled).
+Only zlib (static) and Windows SChannel TLS remain. VP8/VP9, Opus, Vorbis and
+JPEG 2000 use FFmpeg's native decoders; there is no software AV1, Speex or JPEG XL.
+Packages: pacman -S mingw-w64-x86_64-zlib + toolchain (make diffutils git
+mingw-w64-x86_64-{gcc,make,nasm,yasm,pkgconf}).
 
 ## Patented DECODERS removed (PATENT_DEC_WISH in the script)
 H.264 h264; H.265 hevc; H.266 vvc; VC-1/WMV vc1,vc1image,wmv3,wmv3image;
@@ -65,35 +66,22 @@ Cook, TwinVQ, QDM2. Add to PATENT_DEC_WISH if they must go.
 
 ## Critical technical decisions / gotchas (do not re-derive)
 1. DLL count reduced WITHOUT MSVC: --extra-ldflags="-static" statically links
-   libgcc/libstdc++/libwinpthread + zlib INTO the (still --enable-shared) FFmpeg
+   libgcc/libwinpthread + zlib INTO the (still --enable-shared) FFmpeg
    DLLs. MSVC was evaluated and rejected: it still needs MSYS2+make to configure,
    adds a full VS install, and does NOT beat the 7-DLL result. FFmpeg's C API is
    CRT-agnostic across the DLL boundary, so MinGW DLLs link fine into MSVC apps.
-2. C++ deps (libjxl, libopenmpt) without a libstdc++.dll dependency - done the
-   BtbN/FFmpeg-Builds way (github.com/BtbN/FFmpeg-Builds, which also uses gcc):
-   their MSYS2 .pc files omit the C++ runtime from Libs.private, so a -static
-   pkg-config probe fails on std:: symbols. Fix = pkg-config OVERLAY: copy
-   libjxl/libjxl_threads/libopenmpt .pc into $BUILD_DIR/pkgconfig-overlay, append
-   "Libs.private: ... -lstdc++ -ladvapi32", prepend to PKG_CONFIG_PATH. No system
-   file touched. (Earlier I used a global --extra-libs="-lstdc++"; replaced by the
-   scoped overlay per user's steer. The .pc files use absolute prefix=/mingw64 so
-   copying them is safe.)
-3. libjxl headers compiled with -DJXL_STATIC_DEFINE -DJXL_THREADS_STATIC_DEFINE
-   -DJXL_CMS_STATIC_DEFINE because MSYS2's libjxl is a SHARED build (its export
-   headers default to __declspec(dllimport)); the defines force using the static
-   .a instead of a dll-import stub. Symptom without them: undefined `__imp_*`.
-4. libaribcaption (ARIB captions) was SKIPPED: its MSYS2 aribcc_config.h hardcodes
+2. libaribcaption (ARIB captions) was SKIPPED: its MSYS2 aribcc_config.h hardcodes
    ARIBCC_SHARED_LIBRARY=1 (shared-only headers) and it pulls a DirectWrite font
    stack - irrelevant to ONVIF. libilbc skipped too (no static .a -> breaks -static).
-5. --toolchain=gcc is INVALID for FFmpeg configure (only presets like msvc/*-asan).
+3. --toolchain=gcc is INVALID for FFmpeg configure (only presets like msvc/*-asan).
    Use --cc=gcc instead. ("Unknown toolchain gcc" was an early failure.)
-6. `./configure --list-decoders` prints names in MULTIPLE COLUMNS - flatten with
+4. `./configure --list-decoders` prints names in MULTIPLE COLUMNS - flatten with
    `tr -s ' \t\r' '\n'` before grep -qx, else intersection silently returns empty.
-7. --pkg-config-flags=--static is required so pkg-config emits the full static dep
-   chain (hwy/brotli for jxl, mpg123 for openmpt) for the -static link.
-8. Script anchors itself: `cd "$HERE"` (HERE=dirname of BASH_SOURCE) because a
+5. --pkg-config-flags=--static makes pkg-config emit the full static dep chain
+   for the -static link.
+6. Script anchors itself: `cd "$HERE"` (HERE=dirname of BASH_SOURCE) because a
    MSYS2 login shell (bash -lc) starts in $HOME; invoke the script by ABSOLUTE path.
-9. Cleanup `rm -rf "$PREFIX"` is best-effort (|| clear bin) because Windows may
+7. Cleanup `rm -rf "$PREFIX"` is best-effort (|| clear bin) because Windows may
    hold dist\bin (VS Code file watcher / IDE terminal cwd) -> "Device or resource
    busy". A cwd-lock blocks deletion but NOT writing, so make install still works.
    For runtime tests, copy binaries out to /tmp to avoid re-locking dist\bin.
@@ -101,7 +89,7 @@ Cook, TwinVQ, QDM2. Add to PATENT_DEC_WISH if they must go.
 ## Verification commands (reference)
 - DLLs:        ls dist/bin/*.dll   (expect 7)
 - No C++ dep:  objdump -p dist/bin/avcodec-62.dll | grep "DLL Name"  (no libstdc++)
-- Decoders:    ffmpeg -hide_banner -decoders   (468; h264/hevc/aac/ac3 absent)
+- Decoders:    ffmpeg -hide_banner -decoders   (464; h264/hevc/aac/ac3 absent)
 - License:     ffmpeg -L  (LGPL); config.mak CONFIG_GPL/NONFREE must be != yes
 - Arch:        PE machine 0x8664 (x64)
 
