@@ -568,7 +568,7 @@ Copyright notice:
 mingw-w64 winpthreads 14.0.0
   Homepage: https://www.mingw-w64.org/
   License:  MIT AND BSD-3-Clause
-  Use:      POSIX threads for Windows, used by the external libraries (static)
+  Use:      POSIX threads for Windows, used by FFmpeg (statically linked into avutil)
 ================================================================================
 
 Copyright (c) 2011 mingw-w64 project
